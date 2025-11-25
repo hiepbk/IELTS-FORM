@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+dist/
+build/
+packaging/deb/build/
+packaging/deb/dist/
+packaging/windows/dist/
+*.deb
+

@@ -15,17 +15,6 @@ python3 -m pip install --user pygobject pycairo
 python3 ielts_form_gtk.py
 ```
 
-## Desktop launcher (manual)
-
-Ubuntu already ships everything necessary. Run:
-
-```bash
-chmod +x install_desktop_entry.sh
-./install_desktop_entry.sh
-```
-
-This creates a launcher entry (under “IELTS Answer Form”) that reuses system Python.
-
 ## Packaging
 
 We ship helper scripts under `packaging/` to produce distributable artifacts.
@@ -67,7 +56,6 @@ We ship helper scripts under `packaging/` to produce distributable artifacts.
 | --- | --- |
 | `ielts_form_gtk.py` | Main GTK UI |
 | `generate_icon.py` | Utility that re-draws `ielts_icon.png` |
-| `install_desktop_entry.sh` | Launcher installer for dev use |
 | `packaging/deb/build_deb.sh` | Debian package builder |
 | `packaging/windows/build_exe.ps1` | PyInstaller wrapper for `.exe` |
 
