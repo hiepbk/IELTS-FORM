@@ -15,9 +15,24 @@ python3 -m pip install --user pygobject pycairo
 python3 ielts_form_gtk.py
 ```
 
-## Packaging
+## Qt C++ version
 
-We ship helper scripts under `packaging/` to produce distributable artifacts.
+The `qt_app/` directory contains a native Qt 6 Widgets implementation (C++) that matches the Python UI feature-for-feature.
+
+Build on Ubuntu (Qt 6):
+
+```bash
+sudo apt install qt6-base-dev qt6-base-dev-tools cmake ninja-build
+cmake -S qt_app -B build-qt -G Ninja
+cmake --build build-qt
+./build-qt/ielts_form_qt
+```
+
+On Windows, install Qt 6 (or use the Qt online installer), open a Qt command prompt, then run the same two `cmake` commands. Visual Studio or MinGW makes native `.exe` builds without extra runtimes.
+
+## Python packaging
+
+We ship helper scripts under `packaging/` to produce Python-based distributable artifacts.
 
 ### Build a `.deb` (Ubuntu)
 
@@ -56,8 +71,9 @@ We ship helper scripts under `packaging/` to produce distributable artifacts.
 | --- | --- |
 | `ielts_form_gtk.py` | Main GTK UI |
 | `generate_icon.py` | Utility that re-draws `ielts_icon.png` |
-| `packaging/deb/build_deb.sh` | Debian package builder |
-| `packaging/windows/build_exe.ps1` | PyInstaller wrapper for `.exe` |
+| `qt_app/` | Qt 6 Widgets implementation (C++/CMake) |
+| `packaging/deb/build_deb.sh` | Debian package builder (Python/GTK app) |
+| `packaging/windows/build_exe.ps1` | PyInstaller wrapper for `.exe` (Python/GTK app) |
 
 ## License
 
