@@ -23,12 +23,16 @@ Build on Ubuntu (Qt 6):
 
 ```bash
 sudo apt install qt6-base-dev qt6-base-dev-tools cmake ninja-build
-cmake -S qt_app -B build-qt -G Ninja
-cmake --build build-qt
-./build-qt/ielts_form_qt
+./packaging/qt/build_linux.sh
 ```
 
-On Windows, install Qt 6 (or use the Qt online installer), open a Qt command prompt, then run the same two `cmake` commands. Visual Studio or MinGW makes native `.exe` builds without extra runtimes.
+On Windows, install Qt 6 (or open the “Qt 6.x for Desktop” command prompt), then run:
+
+```powershell
+pwsh -File packaging/qt/build_windows.ps1
+```
+
+Both scripts install the binaries under `packaging/qt/dist-*`.
 
 ## Python packaging
 
@@ -72,6 +76,8 @@ We ship helper scripts under `packaging/` to produce Python-based distributable 
 | `ielts_form_gtk.py` | Main GTK UI |
 | `generate_icon.py` | Utility that re-draws `ielts_icon.png` |
 | `qt_app/` | Qt 6 Widgets implementation (C++/CMake) |
+| `packaging/qt/build_linux.sh` | Qt build helper (Linux) |
+| `packaging/qt/build_windows.ps1` | Qt build helper (Windows) |
 | `packaging/deb/build_deb.sh` | Debian package builder (Python/GTK app) |
 | `packaging/windows/build_exe.ps1` | PyInstaller wrapper for `.exe` (Python/GTK app) |
 
