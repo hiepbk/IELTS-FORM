@@ -37,18 +37,24 @@ We ship helper scripts under `packaging/` to produce Python-based distributable 
 
 ### Build a Windows `.exe`
 
-1. Install GTK/PyGObject runtime (MSYS2 recommended) and Python 3.11+.
-2. Install dependencies:
+**Note:** The Windows build now uses `tkinter` instead of GTK to avoid complex dependencies. This means:
+- ✅ No GTK/PyGObject installation needed
+- ✅ Works on any Windows machine with Python
+- ✅ Single `.exe` file, no extra dependencies
+
+1. Install Python 3.11+ and PyInstaller:
    ```powershell
-   pip install pyinstaller pygobject pycairo
+   pip install pyinstaller
    ```
-3. Run PowerShell script (from repo root):
+2. Run PowerShell script (from repo root):
    ```powershell
    pwsh -File packaging/windows/build_exe.ps1 -Version 1.0.0
    ```
-4. Output lands in `packaging/windows/dist/IELTSForm.exe`.
+3. Output lands in `packaging/windows/dist/IELTSForm-1.0.0.exe`.
 
-> **Note:** The Windows build embeds the GTK runtime files collected by PyInstaller. Make sure you run the script from an MSYS2/GTK-enabled environment (MSYS2 shell or Git Bash with `pacman -S mingw-w64-x86_64-gtk3`).
+The `.exe` file is self-contained and can be distributed to any Windows machine without requiring Python or any other dependencies.
+
+> **Why tkinter?** GTK/PyGObject requires complex Unix-like tools and libraries on Windows (MSYS2, pkg-config, GTK runtime). tkinter is built into Python and works natively on Windows. See `WINDOWS_BUILD_EXPLANATION.md` for details.
 
 ## Repository layout
 

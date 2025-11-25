@@ -5,7 +5,8 @@ param(
 
 $projectRoot = Resolve-Path "$PSScriptRoot/../.."
 $specName = "IELTSForm"
-$mainScript = Join-Path $projectRoot "ielts_form_gtk.py"
+# Use tkinter version for Windows (no GTK dependencies needed)
+$mainScript = Join-Path $projectRoot "ielts_form_tkinter.py"
 $iconPath = Join-Path $projectRoot "ielts_icon.png"
 
 if (-not (Test-Path $mainScript)) {
