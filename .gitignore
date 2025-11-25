@@ -5,9 +5,5 @@ build/
 packaging/deb/build/
 packaging/deb/dist/
 packaging/windows/dist/
-packaging/qt/build-linux/
-packaging/qt/dist-linux/
-packaging/qt/build-win/
-packaging/qt/dist-win/
 *.deb
 
