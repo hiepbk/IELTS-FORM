@@ -152,8 +152,14 @@ class SectionFrame(ttk.Frame):
         header_frame = ttk.Frame(main_container)
         header_frame.pack(fill="x", pady=(0, 10))
         for col_index, (title, _) in enumerate(self.groups):
-            label = ttk.Label(header_frame, text=title, font=("TkDefaultFont", 10, "bold"))
-            label.grid(row=0, column=col_index, padx=12, sticky="w")
+            # Create a frame for each header to center the text
+            header_cell = ttk.Frame(header_frame, style="Card.TFrame")
+            header_cell.grid(row=0, column=col_index, padx=8, sticky="ew", ipady=8)
+            label = ttk.Label(header_cell, text=title, style="Heading.TLabel")
+            label.pack(expand=True)  # Center the label in its frame
+        # Configure column weights for equal spacing
+        for col_index in range(len(self.groups)):
+            header_frame.columnconfigure(col_index, weight=1)
 
         # Create columns for each group
         question_number = 1
@@ -162,6 +168,15 @@ class SectionFrame(ttk.Frame):
         # Create a grid for all questions
         questions_frame = ttk.Frame(main_container)
         questions_frame.pack(fill="both", expand=True)
+
+        # Configure columns for equal width per group
+        for col_index in range(len(self.groups)):
+            # Each group takes 4 columns: number, user, key, status
+            base_col = col_index * 4
+            questions_frame.columnconfigure(base_col, weight=0, minsize=40)  # Number column
+            questions_frame.columnconfigure(base_col + 1, weight=1, minsize=80)  # User entry
+            questions_frame.columnconfigure(base_col + 2, weight=1, minsize=80)  # Key entry
+            questions_frame.columnconfigure(base_col + 3, weight=0, minsize=30)  # Status
 
         for col_index, (_, count) in enumerate(self.groups):
             start_number = question_number
@@ -174,11 +189,11 @@ class SectionFrame(ttk.Frame):
 
                 # User answer entry
                 user_entry = ttk.Entry(questions_frame, width=10)
-                user_entry.grid(row=row, column=col_index * 4 + 1, padx=2, pady=1)
+                user_entry.grid(row=row, column=col_index * 4 + 1, padx=2, pady=1, sticky="ew")
 
                 # Key answer entry
                 key_entry = ttk.Entry(questions_frame, width=10, show="" if self.keys_visible else "•")
-                key_entry.grid(row=row, column=col_index * 4 + 2, padx=2, pady=1)
+                key_entry.grid(row=row, column=col_index * 4 + 2, padx=2, pady=1, sticky="ew")
 
                 # Status label
                 status_label = ttk.Label(questions_frame, text="", width=3)
@@ -249,13 +264,240 @@ class SectionFrame(ttk.Frame):
                 entry.insert(0, value)
 
 
+class FormWindow:
+    """Popup window for a single IELTS form."""
+    
+    def __init__(self, parent: tk.Tk, form_name: str, section_name: str, groups: Sequence[GroupSpec]):
+        self.window = tk.Toplevel(parent)
+        self.window.title(f"{form_name} - {section_name}")
+        self.window.configure(bg="#f5f5f5")
+        self.form_name = form_name
+        self.section_name = section_name
+        self.answers_hidden = False
+        
+        # Main container
+        main_frame = ttk.Frame(self.window, padding="15")
+        main_frame.pack(fill="both", expand=True)
+        
+        # Header with form name
+        header_frame = ttk.Frame(main_frame)
+        header_frame.pack(fill="x", pady=(0, 15))
+        title_label = ttk.Label(header_frame, text=form_name, style="Heading.TLabel")
+        title_label.pack(side="left")
+        
+        # Section frame
+        self.section_box = SectionFrame(main_frame, section_name, groups)
+        self.section_box.pack(fill="both", expand=True)
+        
+        # Score label
+        self.score_label = ttk.Label(main_frame, text="", style="Heading.TLabel")
+        self.score_label.pack(pady=8)
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=10)
+        
+        ttk.Button(button_frame, text="Submit", style="Success.TButton", command=self.on_submit_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="Paste Right Answer", style="Primary.TButton", command=self.on_paste_answers_clicked).pack(side="left", padx=3)
+        self.hide_button = ttk.Button(button_frame, text="Hide Answers", style="TButton", command=self.on_toggle_hide_answers)
+        self.hide_button.pack(side="left", padx=3)
+        ttk.Button(button_frame, text="Preview", style="TButton", command=self.on_preview_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="Clear All", style="Danger.TButton", command=self.on_clear_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="Save Answers", style="Primary.TButton", command=self.on_save_clicked).pack(side="left", padx=3)
+        
+        # Auto-size window to fit content
+        self.window.update_idletasks()
+        width = max(self.window.winfo_reqwidth() + 40, 1000)
+        height = max(self.window.winfo_reqheight() + 40, 700)
+        self.window.geometry(f"{width}x{height}")
+        self.window.minsize(1000, 700)
+    
+    def on_submit_clicked(self) -> None:
+        missing_keys = [
+            idx + 1 for idx, value in enumerate(self.section_box.get_answer_keys()) if not value
+        ]
+        if missing_keys:
+            messagebox.showinfo(
+                "Add answer keys",
+                "Please fill the correct-answer boxes before submitting so we can compare."
+            )
+            return
+        correct, _evaluated = self.section_box.evaluate()
+        total = self.section_box.question_count()
+        band = lookup_band(self.section_name, correct)
+        self.score_label.config(text=f"{self.section_name}: {correct}/{total} correct · Band {band:.1f}")
+    
+    def on_paste_answers_clicked(self) -> None:
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Paste Right Answer")
+        dialog.geometry("500x400")
+        dialog.transient(self.window)
+        dialog.grab_set()
+        
+        info_label = ttk.Label(
+            dialog,
+            text="Paste the official answers below.\nLines like '21&22   A, E' will be split automatically.",
+            justify="left"
+        )
+        info_label.pack(pady=10, padx=10, anchor="w")
+        
+        text_widget = scrolledtext.ScrolledText(dialog, height=15, width=60)
+        text_widget.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        result = {"text": ""}
+        
+        def apply_answers():
+            result["text"] = text_widget.get("1.0", tk.END)
+            dialog.destroy()
+        
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=10)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Apply", command=apply_answers).pack(side="left", padx=5)
+        
+        dialog.wait_window()
+        
+        text = result["text"]
+        if not text.strip():
+            return
+        
+        mapping = parse_answer_text(text)
+        if not mapping:
+            messagebox.showinfo("No answers detected", "Make sure the text includes numbered lines.")
+            return
+        
+        self.section_box.apply_answer_keys(mapping)
+        self.section_box.reset_feedback()
+        self.score_label.config(text="")
+    
+    def on_toggle_hide_answers(self) -> None:
+        self.answers_hidden = not self.answers_hidden
+        self.hide_button.config(text="Show Answers" if not self.answers_hidden else "Hide Answers")
+        self.section_box.set_keys_visible(not self.answers_hidden)
+    
+    def on_preview_clicked(self) -> None:
+        answers = self.section_box.get_answers()
+        preview_lines = [self.form_name]
+        preview_lines.extend(
+            [f"  Q{idx:02d}: {answer}" for idx, answer in enumerate(answers, start=1)]
+        )
+        messagebox.showinfo("Preview Answers", "\n".join(preview_lines))
+    
+    def on_clear_clicked(self) -> None:
+        self.section_box.clear()
+        self.score_label.config(text="")
+    
+    def on_save_clicked(self) -> None:
+        answers = self.section_box.get_answers()
+        default_name = f"ielts_{self.form_name.replace(' ', '_')}_answers.txt"
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile=default_name
+        )
+        if file_path:
+            with open(file_path, "w", encoding="utf-8") as handle:
+                handle.write(f"{self.form_name}\n")
+                handle.write(f"{self.section_name}\n")
+                for idx, answer in enumerate(answers, start=1):
+                    handle.write(f"{idx},{answer}\n")
+
+
+class FormListFrame(ttk.Frame):
+    """Frame showing list of forms for a section."""
+    
+    def __init__(self, parent, section_name: str, on_form_clicked):
+        super().__init__(parent)
+        self.section_name = section_name
+        self.on_form_clicked = on_form_clicked
+        self.forms: List[str] = []
+        
+        # Header
+        header_frame = ttk.Frame(self)
+        header_frame.pack(fill="x", pady=15, padx=15)
+        
+        title_label = ttk.Label(header_frame, text=f"{section_name} Forms", style="Heading.TLabel")
+        title_label.pack(side="left")
+        
+        add_button = ttk.Button(header_frame, text="+ New Form", style="Primary.TButton", command=self.on_add_form)
+        add_button.pack(side="right")
+        
+        # Listbox with scrollbar
+        list_frame = ttk.Frame(self, style="Card.TFrame")
+        list_frame.pack(fill="both", expand=True, padx=15, pady=10)
+        
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side="right", fill="y")
+        
+        self.listbox = tk.Listbox(list_frame, 
+                                  font=("Segoe UI", 12),
+                                  yscrollcommand=scrollbar.set,
+                                  bg="white",
+                                  fg="#2c3e50",
+                                  selectbackground="#3498db",
+                                  selectforeground="white",
+                                  borderwidth=0,
+                                  highlightthickness=1,
+                                  highlightcolor="#3498db",
+                                  relief="flat")
+        self.listbox.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        scrollbar.config(command=self.listbox.yview)
+        
+        self.listbox.bind("<Double-Button-1>", self.on_form_double_click)
+        self.listbox.bind("<Return>", self.on_form_double_click)
+    
+    def on_add_form(self) -> None:
+        dialog = tk.Toplevel(self.winfo_toplevel())
+        dialog.title("New Form")
+        dialog.geometry("400x150")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="Enter form name:", font=("TkDefaultFont", 10)).pack(pady=10)
+        
+        entry = ttk.Entry(dialog, width=40, font=("TkDefaultFont", 10))
+        entry.pack(pady=5, padx=20, fill="x")
+        entry.focus()
+        
+        result = {"name": ""}
+        
+        def create_form():
+            name = entry.get().strip()
+            if name:
+                result["name"] = name
+                dialog.destroy()
+        
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=10)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Create", command=create_form).pack(side="left", padx=5)
+        
+        entry.bind("<Return>", lambda e: create_form())
+        dialog.wait_window()
+        
+        name = result["name"]
+        if name:
+            self.add_form(name)
+    
+    def add_form(self, form_name: str) -> None:
+        if form_name not in self.forms:
+            self.forms.append(form_name)
+            self.listbox.insert(tk.END, form_name)
+    
+    def on_form_double_click(self, event=None) -> None:
+        selection = self.listbox.curselection()
+        if selection:
+            form_name = self.listbox.get(selection[0])
+            self.on_form_clicked(form_name)
+
+
 class IELTSApp:
     """Main application window."""
 
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("IELTS Answer Form")
-        self.root.geometry("600x700")
+        self.root.minsize(600, 500)
         if os.path.exists(ICON_PATH):
             try:
                 self.root.iconphoto(True, tk.PhotoImage(file=ICON_PATH))
@@ -270,11 +512,11 @@ class IELTSApp:
         header_frame = ttk.Frame(main_frame)
         header_frame.pack(fill="x", pady=(0, 10))
 
-        self.back_button = ttk.Button(header_frame, text="← Back", command=self.on_change_test_clicked)
+        self.back_button = ttk.Button(header_frame, text="← Back", style="TButton", command=self.on_back_clicked)
         self.back_button.pack(side="left", padx=(0, 10))
         self.back_button.state(["disabled"])
 
-        title_label = ttk.Label(header_frame, text="IELTS Answer Form", font=("TkDefaultFont", 14, "bold"))
+        title_label = ttk.Label(header_frame, text="IELTS Answer Form", style="Title.TLabel")
         title_label.pack(side="left")
 
         # Stack frame for different views
@@ -286,13 +528,14 @@ class IELTSApp:
         landing_content = ttk.Frame(self.landing_frame)
         landing_content.pack(expand=True)
 
-        heading = ttk.Label(landing_content, text="Choose a test to start filling in answers.", font=("TkDefaultFont", 12, "bold"))
+        heading = ttk.Label(landing_content, text="Choose a test to start filling in answers.", style="Heading.TLabel")
         heading.pack(pady=10)
 
         subtext = ttk.Label(
             landing_content,
             text="You can work on Listening or Reading separately.\nPick one below to load its answer sheet.",
-            justify="center"
+            justify="center",
+            style="Subtitle.TLabel"
         )
         subtext.pack(pady=5)
 
@@ -304,81 +547,50 @@ class IELTSApp:
             text="Listening",
             bg="#27ae60",
             fg="white",
-            font=("TkDefaultFont", 14, "bold"),
-            width=15,
-            height=6,
+            font=("Segoe UI", 16, "bold"),
+            width=18,
+            height=4,
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            activebackground="#229954",
+            activeforeground="white",
             command=lambda: self.switch_to_section("listening")
         )
-        listening_button.pack(side="left", padx=10)
+        listening_button.pack(side="left", padx=15, pady=10)
 
         reading_button = tk.Button(
             button_frame,
             text="Reading",
-            bg="#c0392b",
+            bg="#e74c3c",
             fg="white",
-            font=("TkDefaultFont", 14, "bold"),
-            width=15,
-            height=6,
+            font=("Segoe UI", 16, "bold"),
+            width=18,
+            height=4,
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            activebackground="#c0392b",
+            activeforeground="white",
             command=lambda: self.switch_to_section("reading")
         )
-        reading_button.pack(side="left", padx=10)
+        reading_button.pack(side="left", padx=15, pady=10)
 
-        # Section frames
-        listening_groups = [
-            (f"Listening Part {idx} (Q{(idx - 1) * 10 + 1}-{idx * 10})", 10)
-            for idx in range(1, 5)
-        ]
-        self.listening_box = SectionFrame(self.stack_frame, "Listening", listening_groups)
-
-        reading_groups = [
-            ("Reading Passage 1 (Q1-13)", 13),
-            ("Reading Passage 2 (Q14-26)", 13),
-            ("Reading Passage 3 (Q27-40)", 14),
-        ]
-        self.reading_box = SectionFrame(self.stack_frame, "Reading", reading_groups)
+        # Form list frames
+        self.listening_list = FormListFrame(self.stack_frame, "Listening", self.on_form_clicked)
+        self.reading_list = FormListFrame(self.stack_frame, "Reading", self.on_form_clicked)
 
         # Show landing page initially
         self.landing_frame.pack(fill="both", expand=True)
 
-        # Score label
-        self.score_label = ttk.Label(main_frame, text="", font=("TkDefaultFont", 10))
-        self.score_label.pack(pady=5)
-
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill="x", pady=5)
-
-        ttk.Button(button_frame, text="Submit", command=self.on_submit_clicked).pack(side="left", padx=2)
-        ttk.Button(button_frame, text="Paste Right Answer", command=self.on_paste_answers_clicked).pack(side="left", padx=2)
-        self.hide_button = ttk.Button(button_frame, text="Hide Answers", command=self.on_toggle_hide_answers)
-        self.hide_button.pack(side="left", padx=2)
-        ttk.Button(button_frame, text="Preview", command=self.on_preview_clicked).pack(side="left", padx=2)
-        ttk.Button(button_frame, text="Clear All", command=self.on_clear_clicked).pack(side="left", padx=2)
-        ttk.Button(button_frame, text="Save Answers", command=self.on_save_clicked).pack(side="left", padx=2)
-
-        self.answers_hidden = False
         self.current_section = None
-
-    def get_active_section(self) -> Tuple[str, SectionFrame] | None:
-        if self.current_section == "listening":
-            return "Listening", self.listening_box
-        if self.current_section == "reading":
-            return "Reading", self.reading_box
-        return None
-
-    def require_active_section(self) -> Tuple[str, SectionFrame] | None:
-        active = self.get_active_section()
-        if active:
-            return active
-        messagebox.showinfo("Select a test first", "Choose Listening or Reading on the start screen before entering answers.")
-        return None
-
-    def collect_active_answers(self) -> Tuple[str, List[str]] | None:
-        active = self.require_active_section()
-        if not active:
-            return None
-        section_name, section_box = active
-        return section_name, section_box.get_answers()
+        self.open_windows: Dict[str, FormWindow] = {}
+        
+        # Auto-size window
+        self.root.update_idletasks()
+        width = max(self.root.winfo_reqwidth() + 20, 600)
+        height = max(self.root.winfo_reqheight() + 20, 500)
+        self.root.geometry(f"{width}x{height}")
 
     def switch_to_section(self, target: str) -> None:
         if target not in {"listening", "reading"}:
@@ -387,151 +599,190 @@ class IELTSApp:
 
         # Hide all frames
         self.landing_frame.pack_forget()
-        self.listening_box.pack_forget()
-        self.reading_box.pack_forget()
+        self.listening_list.pack_forget()
+        self.reading_list.pack_forget()
 
-        # Show selected section
+        # Show selected section list
         if target == "listening":
-            self.listening_box.pack(fill="both", expand=True)
+            self.listening_list.pack(fill="both", expand=True)
         else:
-            self.reading_box.pack(fill="both", expand=True)
+            self.reading_list.pack(fill="both", expand=True)
 
         self.root.title(f"IELTS Answer Form · {target.capitalize()}")
         self.back_button.state(["!disabled"])
-        self.apply_key_visibility()
-        self.update_score_label("")
+        
+        # Auto-resize window
+        self.root.update_idletasks()
+        width = max(self.root.winfo_reqwidth() + 20, 600)
+        height = max(self.root.winfo_reqheight() + 20, 500)
+        self.root.geometry(f"{width}x{height}")
 
-    def on_change_test_clicked(self) -> None:
+    def on_back_clicked(self) -> None:
         self.current_section = None
         self.landing_frame.pack(fill="both", expand=True)
-        self.listening_box.pack_forget()
-        self.reading_box.pack_forget()
+        self.listening_list.pack_forget()
+        self.reading_list.pack_forget()
         self.root.title("IELTS Answer Form")
         self.back_button.state(["disabled"])
-        self.apply_key_visibility()
-        self.update_score_label("")
+        
+        # Auto-resize window
+        self.root.update_idletasks()
+        width = max(self.root.winfo_reqwidth() + 20, 600)
+        height = max(self.root.winfo_reqheight() + 20, 500)
+        self.root.geometry(f"{width}x{height}")
 
-    def on_clear_clicked(self) -> None:
-        active = self.require_active_section()
-        if not active:
+    def on_form_clicked(self, form_name: str) -> None:
+        """Open or focus a form window."""
+        if not self.current_section:
             return
-        _, section_box = active
-        section_box.clear()
-        self.update_score_label("")
+        
+        # Create unique key for this form
+        form_key = f"{self.current_section}:{form_name}"
+        
+        # If window already exists, focus it
+        if form_key in self.open_windows:
+            try:
+                self.open_windows[form_key].window.lift()
+                self.open_windows[form_key].window.focus()
+                return
+            except tk.TclError:
+                # Window was closed, remove from dict
+                del self.open_windows[form_key]
+        
+        # Create groups based on section
+        if self.current_section == "listening":
+            groups = [
+                (f"Listening Part {idx} (Q{(idx - 1) * 10 + 1}-{idx * 10})", 10)
+                for idx in range(1, 5)
+            ]
+            section_name = "Listening"
+        else:
+            groups = [
+                ("Reading Passage 1 (Q1-13)", 13),
+                ("Reading Passage 2 (Q14-26)", 13),
+                ("Reading Passage 3 (Q27-40)", 14),
+            ]
+            section_name = "Reading"
+        
+        # Create new form window
+        form_window = FormWindow(self.root, form_name, section_name, groups)
+        self.open_windows[form_key] = form_window
+        
+        # Clean up when window closes
+        def on_close():
+            if form_key in self.open_windows:
+                del self.open_windows[form_key]
+            form_window.window.destroy()
+        
+        form_window.window.protocol("WM_DELETE_WINDOW", on_close)
 
-    def on_paste_answers_clicked(self) -> None:
-        active = self.require_active_section()
-        if not active:
-            return
-        section_name, section_box = active
 
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Paste Right Answer")
-        dialog.geometry("500x400")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        info_label = ttk.Label(
-            dialog,
-            text="Paste the official answers below.\nLines like '21&22   A, E' will be split automatically.",
-            justify="left"
-        )
-        info_label.pack(pady=10, padx=10, anchor="w")
-
-        text_widget = scrolledtext.ScrolledText(dialog, height=15, width=60)
-        text_widget.pack(fill="both", expand=True, padx=10, pady=5)
-
-        result = {"text": ""}
-
-        def apply_answers():
-            result["text"] = text_widget.get("1.0", tk.END)
-            dialog.destroy()
-
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(pady=10)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="Apply", command=apply_answers).pack(side="left", padx=5)
-
-        dialog.wait_window()
-
-        text = result["text"]
-        if not text.strip():
-            return
-
-        mapping = parse_answer_text(text)
-        if not mapping:
-            messagebox.showinfo("No answers detected", "Make sure the text includes numbered lines.")
-            return
-
-        section_box.apply_answer_keys(mapping)
-        section_box.reset_feedback()
-        self.update_score_label("")
-
-    def on_toggle_hide_answers(self) -> None:
-        self.answers_hidden = not self.answers_hidden
-        self.apply_key_visibility()
-
-    def on_submit_clicked(self) -> None:
-        active = self.require_active_section()
-        if not active:
-            return
-        section_name, section_box = active
-        missing_keys = [
-            idx + 1 for idx, value in enumerate(section_box.get_answer_keys()) if not value
-        ]
-        if missing_keys:
-            messagebox.showinfo(
-                "Add answer keys",
-                "Please fill the correct-answer boxes before submitting so we can compare."
-            )
-            return
-        correct, _evaluated = section_box.evaluate()
-        total = section_box.question_count()
-        band = lookup_band(section_name, correct)
-        self.update_score_label(f"{section_name}: {correct}/{total} correct · Band {band:.1f}")
-
-    def on_preview_clicked(self) -> None:
-        result = self.collect_active_answers()
-        if not result:
-            return
-        section_name, answers = result
-        preview_lines = [section_name]
-        preview_lines.extend(
-            [f"  Q{idx:02d}: {answer}" for idx, answer in enumerate(answers, start=1)]
-        )
-        messagebox.showinfo("Preview Answers", "\n".join(preview_lines))
-
-    def update_score_label(self, text: str) -> None:
-        self.score_label.config(text=text)
-
-    def apply_key_visibility(self) -> None:
-        visible = not self.answers_hidden
-        self.hide_button.config(text="Show Answers" if not visible else "Hide Answers")
-        if hasattr(self, "listening_box"):
-            self.listening_box.set_keys_visible(visible)
-        if hasattr(self, "reading_box"):
-            self.reading_box.set_keys_visible(visible)
-
-    def on_save_clicked(self) -> None:
-        result = self.collect_active_answers()
-        if not result:
-            return
-        section_name, answers = result
-        default_name = f"ielts_{section_name.lower()}_answers.txt"
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            initialfile=default_name
-        )
-        if file_path:
-            with open(file_path, "w", encoding="utf-8") as handle:
-                handle.write(f"{section_name}\n")
-                for idx, answer in enumerate(answers, start=1):
-                    handle.write(f"{idx},{answer}\n")
+def setup_modern_theme(root: tk.Tk) -> None:
+    """Apply modern theme styling to the application."""
+    style = ttk.Style()
+    
+    # Try to use a modern theme, fallback to default
+    available_themes = style.theme_names()
+    if 'clam' in available_themes:
+        style.theme_use('clam')
+    elif 'alt' in available_themes:
+        style.theme_use('alt')
+    
+    # Modern color palette
+    bg_color = "#f5f5f5"
+    fg_color = "#2c3e50"
+    accent_green = "#27ae60"
+    accent_red = "#e74c3c"
+    accent_blue = "#3498db"
+    border_color = "#bdc3c7"
+    hover_green = "#229954"
+    hover_red = "#c0392b"
+    
+    # Configure root background
+    root.configure(bg=bg_color)
+    
+    # Configure Frame styles
+    style.configure("TFrame", background=bg_color)
+    style.configure("Card.TFrame", background="white", relief="flat")
+    
+    # Configure Label styles
+    style.configure("TLabel", background=bg_color, foreground=fg_color, font=("Segoe UI", 10))
+    style.configure("Title.TLabel", background=bg_color, foreground=fg_color, font=("Segoe UI", 16, "bold"))
+    style.configure("Heading.TLabel", background=bg_color, foreground=fg_color, font=("Segoe UI", 12, "bold"))
+    style.configure("Subtitle.TLabel", background=bg_color, foreground="#7f8c8d", font=("Segoe UI", 9))
+    
+    # Configure Button styles
+    style.configure("TButton", 
+                    font=("Segoe UI", 10),
+                    padding=8,
+                    relief="flat",
+                    borderwidth=0,
+                    focuscolor="none")
+    style.map("TButton",
+              background=[("active", "#ecf0f1"), ("!active", "white")],
+              foreground=[("active", fg_color), ("!active", fg_color)])
+    
+    # Custom button styles
+    style.configure("Primary.TButton",
+                    background=accent_blue,
+                    foreground="white",
+                    font=("Segoe UI", 10, "bold"),
+                    padding=10)
+    style.map("Primary.TButton",
+              background=[("active", "#2980b9"), ("!active", accent_blue)])
+    
+    style.configure("Success.TButton",
+                    background=accent_green,
+                    foreground="white",
+                    font=("Segoe UI", 10, "bold"),
+                    padding=10)
+    style.map("Success.TButton",
+              background=[("active", hover_green), ("!active", accent_green)])
+    
+    style.configure("Danger.TButton",
+                    background=accent_red,
+                    foreground="white",
+                    font=("Segoe UI", 10, "bold"),
+                    padding=10)
+    style.map("Danger.TButton",
+              background=[("active", hover_red), ("!active", accent_red)])
+    
+    # Configure Entry styles
+    style.configure("TEntry",
+                    fieldbackground="white",
+                    foreground=fg_color,
+                    borderwidth=1,
+                    relief="solid",
+                    padding=5,
+                    font=("Segoe UI", 10))
+    style.map("TEntry",
+              bordercolor=[("focus", accent_blue), ("!focus", border_color)])
+    
+    # Configure Listbox style (custom styling for listbox)
+    style.configure("TListbox",
+                    background="white",
+                    foreground=fg_color,
+                    selectbackground=accent_blue,
+                    selectforeground="white",
+                    font=("Segoe UI", 11),
+                    borderwidth=1,
+                    relief="solid")
+    
+    # Configure Scrollbar style
+    style.configure("TScrollbar",
+                    background=bg_color,
+                    troughcolor=bg_color,
+                    borderwidth=0,
+                    arrowcolor=fg_color,
+                    darkcolor=bg_color,
+                    lightcolor=bg_color)
+    style.map("TScrollbar",
+              background=[("active", "#d5dbdb"), ("!active", bg_color)])
 
 
 def main() -> None:
     root = tk.Tk()
+    setup_modern_theme(root)
     app = IELTSApp(root)
     root.mainloop()
 
