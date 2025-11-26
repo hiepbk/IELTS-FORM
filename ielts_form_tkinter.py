@@ -192,7 +192,7 @@ class SectionFrame(ttk.Frame):
                 user_entry.grid(row=row, column=col_index * 4 + 1, padx=2, pady=1, sticky="ew")
 
                 # Key answer entry
-                key_entry = ttk.Entry(questions_frame, width=10, show="" if self.keys_visible else "•")
+                key_entry = ttk.Entry(questions_frame, width=10)
                 key_entry.grid(row=row, column=col_index * 4 + 2, padx=2, pady=1, sticky="ew")
 
                 # Status label
@@ -212,17 +212,57 @@ class SectionFrame(ttk.Frame):
         return [entry.get().strip() for entry in self.user_entries]
 
     def get_answer_keys(self) -> List[str]:
-        return [entry.get().strip() for entry in self.key_entries]
+        """Get answer keys, returning stored text if hidden."""
+        result = []
+        for entry in self.key_entries:
+            text = entry.get().strip()
+            # If showing placeholder, get stored text instead
+            if text == "HIDDEN" and hasattr(entry, '_stored_text'):
+                text = entry._stored_text
+            result.append(text)
+        return result
 
     def clear(self) -> None:
+        """Clear user answers and status labels."""
         for entry in self.user_entries:
             entry.delete(0, tk.END)
         for label in self.status_labels:
             label.config(text="")
 
-    def clear_keys(self) -> None:
-        for entry in self.key_entries:
+    def clear_user_answers(self) -> None:
+        """Clear only user answers (keep keys and status)."""
+        for entry in self.user_entries:
             entry.delete(0, tk.END)
+
+    def clear_keys(self) -> None:
+        """Clear only answer keys."""
+        for entry in self.key_entries:
+            entry.config(state="normal")
+            entry.delete(0, tk.END)
+            # Clear stored text if exists
+            if hasattr(entry, '_stored_text'):
+                delattr(entry, '_stored_text')
+            # If hidden, show placeholder
+            if not self.keys_visible:
+                entry.insert(0, "HIDDEN")
+                entry.config(state="readonly", foreground="#cccccc")
+
+    def clear_all(self) -> None:
+        """Clear both user answers and keys, plus status labels."""
+        for entry in self.user_entries:
+            entry.delete(0, tk.END)
+        for entry in self.key_entries:
+            entry.config(state="normal")
+            entry.delete(0, tk.END)
+            # Clear stored text if exists
+            if hasattr(entry, '_stored_text'):
+                delattr(entry, '_stored_text')
+            # If hidden, show placeholder
+            if not self.keys_visible:
+                entry.insert(0, "HIDDEN")
+                entry.config(state="readonly", foreground="#cccccc")
+        for label in self.status_labels:
+            label.config(text="")
 
     def evaluate(self) -> Tuple[int, int]:
         correct = 0
@@ -253,27 +293,60 @@ class SectionFrame(ttk.Frame):
 
     def set_keys_visible(self, visible: bool) -> None:
         self.keys_visible = visible
+        HIDDEN_PLACEHOLDER = "HIDDEN"
+        
         for entry in self.key_entries:
-            entry.config(show="" if visible else "•")
+            current_text = entry.get()
+            if not visible:
+                # Store actual text (only if not already the placeholder)
+                if current_text != HIDDEN_PLACEHOLDER:
+                    entry._stored_text = current_text
+                # Replace with fixed placeholder
+                entry.config(state="normal")
+                entry.delete(0, tk.END)
+                entry.insert(0, HIDDEN_PLACEHOLDER)
+                entry.config(state="readonly", foreground="#cccccc")
+            else:
+                # Restore actual text
+                stored_text = getattr(entry, '_stored_text', "")
+                entry.config(state="normal", foreground="black")
+                entry.delete(0, tk.END)
+                entry.insert(0, stored_text)
+                # Clean up stored text
+                if hasattr(entry, '_stored_text'):
+                    delattr(entry, '_stored_text')
 
     def apply_answer_keys(self, mapping: Dict[int, str]) -> None:
         for idx, entry in enumerate(self.key_entries, start=1):
             value = mapping.get(idx)
             if value:
+                # Make sure entry is editable
+                entry.config(state="normal")
                 entry.delete(0, tk.END)
                 entry.insert(0, value)
+                # Update stored text if hidden
+                if not self.keys_visible:
+                    entry._stored_text = value
+                    entry.delete(0, tk.END)
+                    entry.insert(0, "HIDDEN")
+                    entry.config(state="readonly", foreground="#cccccc")
 
 
 class FormWindow:
     """Popup window for a single IELTS form."""
     
-    def __init__(self, parent: tk.Tk, form_name: str, section_name: str, groups: Sequence[GroupSpec]):
+    def __init__(self, parent: tk.Tk, form_name: str, section_name: str, groups: Sequence[GroupSpec], 
+                 default_width: int = 1000, default_height: int = 700, min_width: int = 1000, min_height: int = 700):
         self.window = tk.Toplevel(parent)
         self.window.title(f"{form_name} - {section_name}")
         self.window.configure(bg="#f5f5f5")
         self.form_name = form_name
         self.section_name = section_name
         self.answers_hidden = False
+        self.default_width = default_width
+        self.default_height = default_height
+        self.min_width = min_width
+        self.min_height = min_height
         
         # Main container
         main_frame = ttk.Frame(self.window, padding="15")
@@ -297,35 +370,32 @@ class FormWindow:
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill="x", pady=10)
         
-        ttk.Button(button_frame, text="Submit", style="Success.TButton", command=self.on_submit_clicked).pack(side="left", padx=3)
-        ttk.Button(button_frame, text="Paste Right Answer", style="Primary.TButton", command=self.on_paste_answers_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="Submit", style="TButton", command=self.on_submit_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="Paste Right Answer", style="TButton", command=self.on_paste_answers_clicked).pack(side="left", padx=3)
         self.hide_button = ttk.Button(button_frame, text="Hide Answers", style="TButton", command=self.on_toggle_hide_answers)
         self.hide_button.pack(side="left", padx=3)
         ttk.Button(button_frame, text="Preview", style="TButton", command=self.on_preview_clicked).pack(side="left", padx=3)
-        ttk.Button(button_frame, text="Clear All", style="Danger.TButton", command=self.on_clear_clicked).pack(side="left", padx=3)
-        ttk.Button(button_frame, text="Save Answers", style="Primary.TButton", command=self.on_save_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="Clear All", style="TButton", command=self.on_clear_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="Save Answers", style="TButton", command=self.on_save_clicked).pack(side="left", padx=3)
         
         # Auto-size window to fit content
+        # NOTE: To manually adjust popup window size, modify the default_width/default_height
+        # parameters when creating FormWindow (in on_form_clicked method)
         self.window.update_idletasks()
-        width = max(self.window.winfo_reqwidth() + 40, 1000)
-        height = max(self.window.winfo_reqheight() + 40, 700)
+        width = max(self.window.winfo_reqwidth() + 40, self.default_width)
+        height = max(self.window.winfo_reqheight() + 40, self.default_height)
         self.window.geometry(f"{width}x{height}")
-        self.window.minsize(1000, 700)
+        self.window.minsize(self.min_width, self.min_height)
     
     def on_submit_clicked(self) -> None:
-        missing_keys = [
-            idx + 1 for idx, value in enumerate(self.section_box.get_answer_keys()) if not value
-        ]
-        if missing_keys:
-            messagebox.showinfo(
-                "Add answer keys",
-                "Please fill the correct-answer boxes before submitting so we can compare."
-            )
-            return
-        correct, _evaluated = self.section_box.evaluate()
+        # Evaluate only questions that have answer keys (optional)
+        correct, evaluated = self.section_box.evaluate()
         total = self.section_box.question_count()
+        if evaluated == 0:
+            self.score_label.config(text="No answer keys provided. Fill in answer keys to get a score.")
+            return
         band = lookup_band(self.section_name, correct)
-        self.score_label.config(text=f"{self.section_name}: {correct}/{total} correct · Band {band:.1f}")
+        self.score_label.config(text=f"{self.section_name}: {correct}/{evaluated} correct (out of {evaluated} with keys) · Band {band:.1f}")
     
     def on_paste_answers_clicked(self) -> None:
         dialog = tk.Toplevel(self.window)
@@ -384,8 +454,109 @@ class FormWindow:
         messagebox.showinfo("Preview Answers", "\n".join(preview_lines))
     
     def on_clear_clicked(self) -> None:
-        self.section_box.clear()
-        self.score_label.config(text="")
+        """Show dialog with clear options."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Clear Answers")
+        dialog.geometry("400x250")
+        dialog.transient(self.window)
+        dialog.grab_set()
+        dialog.configure(bg="#f5f5f5")
+        
+        # Title
+        title_label = ttk.Label(dialog, text="What would you like to clear?", style="Heading.TLabel")
+        title_label.pack(pady=20)
+        
+        # Buttons frame
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=20, padx=20, fill="both", expand=True)
+        
+        result = {"action": None}
+        
+        def clear_user_only():
+            result["action"] = "user"
+            dialog.destroy()
+        
+        def clear_keys_only():
+            result["action"] = "keys"
+            dialog.destroy()
+        
+        def clear_all():
+            result["action"] = "all"
+            dialog.destroy()
+        
+        def cancel():
+            result["action"] = "cancel"
+            dialog.destroy()
+        
+        # Option buttons
+        ttk.Button(button_frame, text="Clear Only User Answers", style="TButton", 
+                  command=clear_user_only).pack(fill="x", pady=5)
+        ttk.Button(button_frame, text="Clear Only Right Answers", style="TButton", 
+                  command=clear_keys_only).pack(fill="x", pady=5)
+        ttk.Button(button_frame, text="Clear All Answers", style="TButton", 
+                  command=clear_all).pack(fill="x", pady=5)
+        ttk.Button(button_frame, text="Cancel", style="TButton", 
+                  command=cancel).pack(fill="x", pady=5)
+        
+        dialog.wait_window()
+        
+        action = result["action"]
+        if action == "user":
+            self.section_box.clear_user_answers()
+            self.score_label.config(text="")
+        elif action == "keys":
+            self.section_box.clear_keys()
+            self.section_box.reset_feedback()
+            self.score_label.config(text="")
+        elif action == "all":
+            self.section_box.clear_all()
+            self.score_label.config(text="")
+        # If cancel, do nothing
+    
+    def save_state(self) -> Dict:
+        """Save current form state (answers, keys, score, etc.)."""
+        return {
+            "user_answers": self.section_box.get_answers(),
+            "answer_keys": self.section_box.get_answer_keys(),
+            "score_text": self.score_label.cget("text"),
+            "answers_hidden": self.answers_hidden,
+        }
+    
+    def load_state(self, state: Dict) -> None:
+        """Load saved form state."""
+        if not state:
+            return
+        
+        # Restore user answers
+        user_answers = state.get("user_answers", [])
+        for idx, entry in enumerate(self.section_box.user_entries):
+            if idx < len(user_answers):
+                entry.delete(0, tk.END)
+                entry.insert(0, user_answers[idx])
+        
+        # Restore answer keys
+        answer_keys = state.get("answer_keys", [])
+        for idx, entry in enumerate(self.section_box.key_entries):
+            if idx < len(answer_keys) and answer_keys[idx]:
+                entry.config(state="normal")
+                entry.delete(0, tk.END)
+                entry.insert(0, answer_keys[idx])
+                # Update stored text if hidden
+                if not self.keys_visible:
+                    entry._stored_text = answer_keys[idx]
+                    entry.delete(0, tk.END)
+                    entry.insert(0, "HIDDEN")
+                    entry.config(state="readonly", foreground="#cccccc")
+        
+        # Restore score
+        score_text = state.get("score_text", "")
+        if score_text:
+            self.score_label.config(text=score_text)
+        
+        # Restore hide state
+        answers_hidden = state.get("answers_hidden", False)
+        if answers_hidden != self.answers_hidden:
+            self.on_toggle_hide_answers()
     
     def on_save_clicked(self) -> None:
         answers = self.section_box.get_answers()
@@ -585,6 +756,8 @@ class IELTSApp:
 
         self.current_section = None
         self.open_windows: Dict[str, FormWindow] = {}
+        # Store form states (persists across window open/close)
+        self.form_states: Dict[str, Dict] = {}
         
         # Auto-size window
         self.root.update_idletasks()
@@ -649,13 +822,18 @@ class IELTSApp:
                 # Window was closed, remove from dict
                 del self.open_windows[form_key]
         
-        # Create groups based on section
+        # Create groups based on section and set appropriate window sizes
         if self.current_section == "listening":
             groups = [
                 (f"Listening Part {idx} (Q{(idx - 1) * 10 + 1}-{idx * 10})", 10)
                 for idx in range(1, 5)
             ]
             section_name = "Listening"
+            # Listening has 4 columns, needs wider window
+            default_width = 1200
+            default_height = 700
+            min_width = 1000
+            min_height = 600
         else:
             groups = [
                 ("Reading Passage 1 (Q1-13)", 13),
@@ -663,14 +841,34 @@ class IELTSApp:
                 ("Reading Passage 3 (Q27-40)", 14),
             ]
             section_name = "Reading"
+            # Reading has 3 columns, can be narrower
+            default_width = 1000
+            default_height = 700
+            min_width = 900
+            min_height = 600
         
-        # Create new form window
-        form_window = FormWindow(self.root, form_name, section_name, groups)
+        # Create new form window with section-specific sizes
+        form_window = FormWindow(
+            self.root, 
+            form_name, 
+            section_name, 
+            groups,
+            default_width=default_width,
+            default_height=default_height,
+            min_width=min_width,
+            min_height=min_height
+        )
         self.open_windows[form_key] = form_window
+        
+        # Load saved state if exists
+        if form_key in self.form_states:
+            form_window.load_state(self.form_states[form_key])
         
         # Clean up when window closes
         def on_close():
+            # Save state before closing
             if form_key in self.open_windows:
+                self.form_states[form_key] = form_window.save_state()
                 del self.open_windows[form_key]
             form_window.window.destroy()
         
