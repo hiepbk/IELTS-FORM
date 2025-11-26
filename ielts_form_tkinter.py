@@ -7,7 +7,7 @@ import json
 import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -121,9 +121,22 @@ def lookup_band(section_name: str, correct: int) -> float:
 QUESTION_LINE_RE = re.compile(r"^(\d+(?:&\d+)*)(?:[.)-])?\s+(.*)$")
 
 
-def parse_answer_text(text: str) -> Dict[int, str]:
-    """Parse pasted answer text into a question->answer mapping."""
+def parse_answer_text(text: str) -> Tuple[Dict[int, str], Dict[int, List[int]]]:
+    """Parse pasted answer text into a question->answer mapping.
+    
+    Returns:
+        Tuple of (mapping, shared_groups):
+        - mapping: Dict[int, str] - question number to answer string
+        - shared_groups: Dict[int, List[int]] - question number to list of questions in same group
+    
+    Handles formats like:
+    - "21 B" -> question 21 has answer B
+    - "21&22 B, D" -> questions 21 and 22 share answers B, D (each answer can only be used once)
+    - "23&24&25 A, B, C" -> questions 23, 24, 25 share answers A, B, C
+    """
     mapping: Dict[int, str] = {}
+    shared_groups: Dict[int, List[int]] = {}  # Maps question to list of questions in its group
+    
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -139,19 +152,45 @@ def parse_answer_text(text: str) -> Dict[int, str]:
         answer_blob = match.group(2).strip()
         if not answer_blob:
             continue
+        
+        # Parse answers - split by comma or semicolon
         answers = [ans.strip() for ans in re.split(r",|;", answer_blob) if ans.strip()]
         if not answers:
             answers = [answer_blob]
-        for idx, token in enumerate(question_tokens):
+        
+        # Parse question numbers
+        question_numbers = []
+        for token in question_tokens:
             try:
                 qnum = int(token)
             except ValueError:
                 continue
             if qnum < 1 or qnum > NUM_QUESTIONS:
                 continue
-            answer_value = answers[idx] if idx < len(answers) else answers[-1]
-            mapping[qnum] = answer_value
-    return mapping
+            question_numbers.append(qnum)
+        
+        if not question_numbers:
+            continue
+        
+        # If multiple questions share answers (e.g., "21&22 B, D")
+        # Store them as a shared group - answers must be matched without replacement
+        if len(question_numbers) > 1:
+            # Store shared group info for all questions in the group
+            for qnum in question_numbers:
+                shared_groups[qnum] = question_numbers.copy()
+            # Store the answer options (comma-separated for shared groups)
+            shared_answer = ", ".join(answers)
+            for qnum in question_numbers:
+                mapping[qnum] = shared_answer
+        else:
+            # Single question - join multiple options with " / " if multiple answers
+            qnum = question_numbers[0]
+            if len(answers) > 1:
+                mapping[qnum] = " / ".join(answers)
+            else:
+                mapping[qnum] = answers[0]
+    
+    return mapping, shared_groups
 
 
 class SectionFrame(ttk.Frame):
@@ -188,6 +227,7 @@ class SectionFrame(ttk.Frame):
         self.user_entries: List[ttk.Entry] = []
         self.key_entries: List[ttk.Entry] = []
         self.status_labels: List[ttk.Label] = []
+        self.shared_groups: Dict[int, List[int]] = {}  # Maps question number to list of questions in same group
         self._build_groups()
 
     def _build_groups(self) -> None:
@@ -319,11 +359,19 @@ class SectionFrame(ttk.Frame):
             label.config(text="")
 
     def evaluate(self) -> Tuple[int, int]:
+        """Evaluate answers, handling shared answer groups correctly."""
         correct = 0
         evaluated = 0
-        for user_entry, key_entry, status_label in zip(
-            self.user_entries, self.key_entries, self.status_labels
+        processed_groups = set()  # Track which groups we've already processed
+        
+        # First, evaluate questions that are NOT in shared groups
+        for idx, (user_entry, key_entry, status_label) in enumerate(
+            zip(self.user_entries, self.key_entries, self.status_labels), start=1
         ):
+            # Skip if this question is part of a shared group (will process groups separately)
+            if idx in self.shared_groups:
+                continue
+            
             key_raw = key_entry.get().strip()
             if not key_raw:
                 status_label.config(text="")
@@ -336,6 +384,75 @@ class SectionFrame(ttk.Frame):
             status_label.config(text=symbol, foreground=color)
             if is_correct:
                 correct += 1
+        
+        # Now evaluate shared groups (e.g., "21&22 B, D")
+        for qnum, group_questions in self.shared_groups.items():
+            # Skip if we've already processed this group
+            group_tuple = tuple(sorted(group_questions))
+            if group_tuple in processed_groups:
+                continue
+            processed_groups.add(group_tuple)
+            
+            # Get all entries for this group
+            group_user_answers = []
+            group_key_answers = []
+            group_labels = []
+            group_indices = []
+            
+            for q in group_questions:
+                if q < 1 or q > len(self.user_entries):
+                    continue
+                idx = q - 1  # Convert to 0-based index
+                group_user_answers.append(self.user_entries[idx].get().strip())
+                key_raw = self.key_entries[idx].get().strip()
+                group_key_answers.append(key_raw)
+                group_labels.append(self.status_labels[idx])
+                group_indices.append(q)
+            
+            # Check if any key is empty - skip group if all keys empty
+            if not any(group_key_answers):
+                for label in group_labels:
+                    label.config(text="")
+                continue
+            
+            evaluated += len(group_questions)
+            
+            # Parse key answers - they should be comma-separated (e.g., "B, D")
+            # Get the first non-empty key answer
+            key_answer_str = next((k for k in group_key_answers if k), "")
+            if not key_answer_str:
+                for label in group_labels:
+                    label.config(text="")
+                continue
+            
+            # Parse available answer options (split by comma)
+            available_options = [opt.strip() for opt in key_answer_str.split(",") if opt.strip()]
+            
+            # Match user answers to available options without replacement
+            # This ensures each option can only be used once
+            used_options = set()
+            group_correct = 0
+            
+            for user_answer, label in zip(group_user_answers, group_labels):
+                user_normalized = normalize_answer(user_answer)
+                matched = False
+                
+                # Try to match user answer to an unused option
+                for option in available_options:
+                    option_normalized = normalize_answer(option)
+                    if user_normalized == option_normalized and option not in used_options:
+                        matched = True
+                        used_options.add(option)
+                        group_correct += 1
+                        break
+                
+                # Update label
+                symbol = "✓" if matched else "✗"
+                color = "green" if matched else "red"
+                label.config(text=symbol, foreground=color)
+            
+            correct += group_correct
+        
         return correct, evaluated
 
     def reset_feedback(self) -> None:
@@ -370,7 +487,18 @@ class SectionFrame(ttk.Frame):
                 if hasattr(entry, '_stored_text'):
                     delattr(entry, '_stored_text')
 
-    def apply_answer_keys(self, mapping: Dict[int, str]) -> None:
+    def apply_answer_keys(self, mapping: Dict[int, str], shared_groups: Optional[Dict[int, List[int]]] = None) -> None:
+        """Apply answer keys to entries.
+        
+        Args:
+            mapping: Question number to answer string
+            shared_groups: Question number to list of questions in same group (for shared answers)
+        """
+        if shared_groups:
+            self.shared_groups = shared_groups
+        else:
+            self.shared_groups = {}
+        
         for idx, entry in enumerate(self.key_entries, start=1):
             value = mapping.get(idx)
             if value:
@@ -593,12 +721,12 @@ class FormWindow:
         if not text.strip():
             return
         
-        mapping = parse_answer_text(text)
+        mapping, shared_groups = parse_answer_text(text)
         if not mapping:
             messagebox.showinfo("No answers detected", "Make sure the text includes numbered lines.")
             return
         
-        self.section_box.apply_answer_keys(mapping)
+        self.section_box.apply_answer_keys(mapping, shared_groups)
         self.section_box.reset_feedback()
         self.score_label.config(text="")
     
