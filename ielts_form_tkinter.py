@@ -91,6 +91,25 @@ def normalize_answer(answer: str) -> str:
     return cleaned
 
 
+def is_answer_correct(user_answer: str, key_answer: str) -> bool:
+    """Check if user answer matches the key answer.
+    
+    The key answer may contain multiple options separated by "/" (e.g., "gardens / gardening").
+    If the user provides any of these options, it's considered correct.
+    """
+    user_normalized = normalize_answer(user_answer)
+    
+    # Split key answer by "/" to get multiple acceptable options
+    key_options = [opt.strip() for opt in key_answer.split("/")]
+    
+    # Check if user's normalized answer matches any of the key options
+    for key_option in key_options:
+        if user_normalized == normalize_answer(key_option):
+            return True
+    
+    return False
+
+
 def lookup_band(section_name: str, correct: int) -> float:
     table = LISTENING_BAND_TABLE if section_name.lower() == "listening" else READING_BAND_TABLE
     for threshold, band in table:
@@ -311,7 +330,7 @@ class SectionFrame(ttk.Frame):
                 continue
             evaluated += 1
             user_raw = user_entry.get().strip()
-            is_correct = normalize_answer(user_raw) == normalize_answer(key_raw)
+            is_correct = is_answer_correct(user_raw, key_raw)
             symbol = "✓" if is_correct else "✗"
             color = "green" if is_correct else "red"
             status_label.config(text=symbol, foreground=color)
