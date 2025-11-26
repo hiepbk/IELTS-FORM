@@ -3,13 +3,48 @@
 
 import os
 import re
+import json
+import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Dict, List, Sequence, Tuple
+from datetime import datetime, timedelta
+from pathlib import Path
 
 NUM_QUESTIONS = 40
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ICON_PATH = os.path.join(APP_DIR, "ielts_icon.png")
+
+# Get user data directory based on platform
+def get_user_data_dir() -> Path:
+    """Get platform-specific user data directory for storing application data.
+    
+    Linux: ~/.local/share/ielts-form/
+    Windows: %APPDATA%/IELTSForm/
+    macOS: ~/Library/Application Support/IELTSForm/
+    """
+    if sys.platform == "win32":
+        # Windows: Use APPDATA (roaming) or LOCALAPPDATA (local)
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            return Path(appdata) / "IELTSForm"
+        # Fallback to user home
+        return Path.home() / "AppData" / "Roaming" / "IELTSForm"
+    elif sys.platform == "darwin":
+        # macOS: Use Application Support
+        return Path.home() / "Library" / "Application Support" / "IELTSForm"
+    else:
+        # Linux and other Unix-like: Use XDG Base Directory Specification
+        # Prefer XDG_DATA_HOME, fallback to ~/.local/share
+        xdg_data_home = os.getenv("XDG_DATA_HOME")
+        if xdg_data_home:
+            return Path(xdg_data_home) / "ielts-form"
+        return Path.home() / ".local" / "share" / "ielts-form"
+
+# Set up data directory and database file
+USER_DATA_DIR = get_user_data_dir()
+USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+FORMS_DB_FILE = USER_DATA_DIR / "forms.json"
 
 GroupSpec = Tuple[str, int]
 
@@ -352,11 +387,36 @@ class FormWindow:
         main_frame = ttk.Frame(self.window, padding="15")
         main_frame.pack(fill="both", expand=True)
         
-        # Header with form name
+        # Header with form name and timer
         header_frame = ttk.Frame(main_frame)
         header_frame.pack(fill="x", pady=(0, 15))
         title_label = ttk.Label(header_frame, text=form_name, style="Heading.TLabel")
         title_label.pack(side="left")
+        
+        # Timer section
+        timer_frame = ttk.Frame(header_frame)
+        timer_frame.pack(side="right")
+        
+        # Set timer duration based on section
+        timer_minutes = 30 if section_name == "Listening" else 60
+        self.timer_seconds = timer_minutes * 60
+        self.timer_running = False
+        self.timer_end_time = None
+        
+        self.timer_label = ttk.Label(timer_frame, text=f"⏱️ {self.format_time(self.timer_seconds)}", 
+                                     font=("Segoe UI", 12, "bold"), foreground="#2c3e50")
+        self.timer_label.pack(side="left", padx=5)
+        
+        self.timer_button = ttk.Button(timer_frame, text="▶ Start", style="TButton", 
+                                      command=self.toggle_timer, width=8)
+        self.timer_button.pack(side="left", padx=2)
+        
+        reset_button = ttk.Button(timer_frame, text="🔄 Reset", style="TButton", 
+                                 command=self.reset_timer, width=8)
+        reset_button.pack(side="left", padx=2)
+        
+        # Start timer update after window is fully initialized
+        self.window.after(100, self.update_timer)
         
         # Section frame
         self.section_box = SectionFrame(main_frame, section_name, groups)
@@ -366,17 +426,17 @@ class FormWindow:
         self.score_label = ttk.Label(main_frame, text="", style="Heading.TLabel")
         self.score_label.pack(pady=8)
         
-        # Buttons
+        # Buttons with icons
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill="x", pady=10)
         
-        ttk.Button(button_frame, text="Submit", style="TButton", command=self.on_submit_clicked).pack(side="left", padx=3)
-        ttk.Button(button_frame, text="Paste Right Answer", style="TButton", command=self.on_paste_answers_clicked).pack(side="left", padx=3)
-        self.hide_button = ttk.Button(button_frame, text="Hide Answers", style="TButton", command=self.on_toggle_hide_answers)
+        ttk.Button(button_frame, text="✓ Submit", style="TButton", command=self.on_submit_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="📋 Paste Right Answer", style="TButton", command=self.on_paste_answers_clicked).pack(side="left", padx=3)
+        self.hide_button = ttk.Button(button_frame, text="👁️ Hide Answers", style="TButton", command=self.on_toggle_hide_answers)
         self.hide_button.pack(side="left", padx=3)
-        ttk.Button(button_frame, text="Preview", style="TButton", command=self.on_preview_clicked).pack(side="left", padx=3)
-        ttk.Button(button_frame, text="Clear All", style="TButton", command=self.on_clear_clicked).pack(side="left", padx=3)
-        ttk.Button(button_frame, text="Save Answers", style="TButton", command=self.on_save_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="👀 Preview", style="TButton", command=self.on_preview_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="🗑️ Clear All", style="TButton", command=self.on_clear_clicked).pack(side="left", padx=3)
+        ttk.Button(button_frame, text="💾 Save Answers", style="TButton", command=self.on_save_clicked).pack(side="left", padx=3)
         
         # Auto-size window to fit content
         # NOTE: To manually adjust popup window size, modify the default_width/default_height
@@ -386,6 +446,89 @@ class FormWindow:
         height = max(self.window.winfo_reqheight() + 40, self.default_height)
         self.window.geometry(f"{width}x{height}")
         self.window.minsize(self.min_width, self.min_height)
+    
+    def format_time(self, seconds: int) -> str:
+        """Format seconds as MM:SS."""
+        mins = seconds // 60
+        secs = seconds % 60
+        return f"{mins:02d}:{secs:02d}"
+    
+    def toggle_timer(self) -> None:
+        """Start or pause the timer."""
+        if not self.timer_running:
+            # Start timer
+            if self.timer_end_time is None:
+                self.timer_end_time = datetime.now() + timedelta(seconds=self.timer_seconds)
+            else:
+                # Resume from where we left off
+                remaining = (self.timer_end_time - datetime.now()).total_seconds()
+                if remaining <= 0:
+                    self.timer_end_time = datetime.now() + timedelta(seconds=self.timer_seconds)
+                else:
+                    self.timer_end_time = datetime.now() + timedelta(seconds=remaining)
+            self.timer_running = True
+            self.timer_button.config(text="⏸ Pause")
+        else:
+            # Pause timer
+            self.timer_running = False
+            self.timer_button.config(text="▶ Start")
+    
+    def reset_timer(self) -> None:
+        """Reset timer to initial value."""
+        timer_minutes = 30 if self.section_name == "Listening" else 60
+        self.timer_seconds = timer_minutes * 60
+        self.timer_running = False
+        self.timer_end_time = None
+        self.timer_label.config(text=f"⏱️ {self.format_time(self.timer_seconds)}", foreground="#2c3e50")
+        self.timer_button.config(text="▶ Start")
+    
+    def update_timer(self) -> None:
+        """Update timer display every second."""
+        # Check if window still exists by trying to access a widget property
+        try:
+            # Try to access window title - if window is destroyed, this will raise TclError
+            _ = self.window.title()
+        except (tk.TclError, AttributeError, RuntimeError):
+            # Window was destroyed
+            return
+        
+        if self.timer_running and self.timer_end_time:
+            remaining = int((self.timer_end_time - datetime.now()).total_seconds())
+            if remaining <= 0:
+                # Time's up!
+                self.timer_running = False
+                try:
+                    self.timer_label.config(text="⏱️ 00:00", foreground="#e74c3c")
+                    self.timer_button.config(text="▶ Start")
+                    # Show alarm
+                    self.window.bell()  # System beep
+                    messagebox.showwarning("Time's Up!", f"Your {self.section_name} test time has ended!")
+                except tk.TclError:
+                    return  # Window was destroyed
+            else:
+                self.timer_seconds = remaining
+                # Change color when less than 5 minutes remaining
+                color = "#e74c3c" if remaining < 300 else "#2c3e50"
+                try:
+                    self.timer_label.config(text=f"⏱️ {self.format_time(remaining)}", foreground=color)
+                except tk.TclError:
+                    return  # Window was destroyed
+        else:
+            # Show current time if paused
+            if self.timer_end_time:
+                remaining = int((self.timer_end_time - datetime.now()).total_seconds())
+                if remaining > 0:
+                    self.timer_seconds = remaining
+                    try:
+                        self.timer_label.config(text=f"⏱️ {self.format_time(remaining)}", foreground="#2c3e50")
+                    except tk.TclError:
+                        return  # Window was destroyed
+        
+        # Schedule next update only if window still exists
+        try:
+            self.window.after(1000, self.update_timer)
+        except tk.TclError:
+            pass  # Window was destroyed
     
     def on_submit_clicked(self) -> None:
         # Evaluate only questions that have answer keys (optional)
@@ -442,7 +585,7 @@ class FormWindow:
     
     def on_toggle_hide_answers(self) -> None:
         self.answers_hidden = not self.answers_hidden
-        self.hide_button.config(text="Show Answers" if not self.answers_hidden else "Hide Answers")
+        self.hide_button.config(text="👁️ Show Answers" if not self.answers_hidden else "👁️ Hide Answers")
         self.section_box.set_keys_visible(not self.answers_hidden)
     
     def on_preview_clicked(self) -> None:
@@ -541,19 +684,13 @@ class FormWindow:
                 entry.config(state="normal")
                 entry.delete(0, tk.END)
                 entry.insert(0, answer_keys[idx])
-                # Update stored text if hidden
-                if not self.keys_visible:
-                    entry._stored_text = answer_keys[idx]
-                    entry.delete(0, tk.END)
-                    entry.insert(0, "HIDDEN")
-                    entry.config(state="readonly", foreground="#cccccc")
         
         # Restore score
         score_text = state.get("score_text", "")
         if score_text:
             self.score_label.config(text=score_text)
         
-        # Restore hide state
+        # Restore hide state (this will handle hiding keys if needed)
         answers_hidden = state.get("answers_hidden", False)
         if answers_hidden != self.answers_hidden:
             self.on_toggle_hide_answers()
@@ -575,13 +712,17 @@ class FormWindow:
 
 
 class FormListFrame(ttk.Frame):
-    """Frame showing list of forms for a section."""
+    """Frame showing list of forms for a section with simple button-based UI."""
     
-    def __init__(self, parent, section_name: str, on_form_clicked):
+    def __init__(self, parent, section_name: str, on_form_clicked, get_form_state=None, save_callback=None, delete_callback=None):
         super().__init__(parent)
         self.section_name = section_name
         self.on_form_clicked = on_form_clicked
+        self.get_form_state = get_form_state  # Function to get form state for status
+        self.save_callback = save_callback  # Function to save database
+        self.delete_callback = delete_callback  # Function to delete form state from database
         self.forms: List[str] = []
+        self._click_in_progress = False  # Flag to prevent rapid double-clicks
         
         # Header
         header_frame = ttk.Frame(self)
@@ -590,44 +731,108 @@ class FormListFrame(ttk.Frame):
         title_label = ttk.Label(header_frame, text=f"{section_name} Forms", style="Heading.TLabel")
         title_label.pack(side="left")
         
-        add_button = ttk.Button(header_frame, text="+ New Form", style="Primary.TButton", command=self.on_add_form)
+        # Button frame for actions
+        button_frame = ttk.Frame(header_frame)
+        button_frame.pack(side="right")
+        
+        delete_button = ttk.Button(button_frame, text="🗑️ Delete", style="Danger.TButton", command=self.on_delete_form)
+        delete_button.pack(side="right", padx=(0, 5))
+        
+        add_button = ttk.Button(button_frame, text="➕ New", style="TButton", command=self.on_add_form)
         add_button.pack(side="right")
         
-        # Listbox with scrollbar
-        list_frame = ttk.Frame(self, style="Card.TFrame")
+        # Simple listbox with scrollbar (most stable approach)
+        list_frame = ttk.Frame(self)
         list_frame.pack(fill="both", expand=True, padx=15, pady=10)
         
         scrollbar = ttk.Scrollbar(list_frame)
         scrollbar.pack(side="right", fill="y")
         
-        self.listbox = tk.Listbox(list_frame, 
-                                  font=("Segoe UI", 12),
-                                  yscrollcommand=scrollbar.set,
-                                  bg="white",
-                                  fg="#2c3e50",
-                                  selectbackground="#3498db",
-                                  selectforeground="white",
-                                  borderwidth=0,
-                                  highlightthickness=1,
-                                  highlightcolor="#3498db",
-                                  relief="flat")
-        self.listbox.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        self.listbox = tk.Listbox(
+            list_frame,
+            font=("Segoe UI", 12),
+            yscrollcommand=scrollbar.set,
+            bg="white",
+            fg="#2c3e50",
+            selectbackground="#3498db",
+            selectforeground="white",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightcolor="#3498db",
+            relief="flat",
+            activestyle="none"  # Remove underline on selection
+        )
+        self.listbox.pack(side="left", fill="both", expand=True)
         scrollbar.config(command=self.listbox.yview)
         
+        # Bind events - only double-click opens forms
         self.listbox.bind("<Double-Button-1>", self.on_form_double_click)
         self.listbox.bind("<Return>", self.on_form_double_click)
+    
+    def suggest_next_form_name(self) -> str:
+        """Suggest the next form name based on existing forms."""
+        # Pattern to match: "Practice Cam XX Listening Test YY" or "Practice Cam XX Reading Test YY"
+        pattern = re.compile(r"Practice Cam (\d+) (Listening|Reading) Test (\d+)")
+        
+        max_cam = 0
+        cam_test_map = {}  # Map of cam_number -> max_test_number
+        
+        # Parse all existing forms
+        for form_name in self.forms:
+            match = pattern.match(form_name)
+            if match:
+                cam_num = int(match.group(1))
+                test_num = int(match.group(3))
+                
+                max_cam = max(max_cam, cam_num)
+                
+                if cam_num not in cam_test_map:
+                    cam_test_map[cam_num] = test_num
+                else:
+                    cam_test_map[cam_num] = max(cam_test_map[cam_num], test_num)
+        
+        # Determine next form name
+        if not cam_test_map:
+            # No existing forms, start with Cam 10 Test 01
+            next_cam = 10
+            next_test = 1
+        else:
+            # Find the highest Cam number and its max test
+            highest_cam = max(cam_test_map.keys())
+            max_test = cam_test_map[highest_cam]
+            
+            if max_test < 4:
+                # Increment test number
+                next_cam = highest_cam
+                next_test = max_test + 1
+            else:
+                # Max test reached, increment Cam and reset test to 01
+                next_cam = highest_cam + 1
+                next_test = 1
+        
+        # Generate suggested name (2-digit format for consistency)
+        section_type = "Listening" if self.section_name == "Listening" else "Reading"
+        return f"Practice Cam {next_cam} {section_type} Test {next_test:02d}"
     
     def on_add_form(self) -> None:
         dialog = tk.Toplevel(self.winfo_toplevel())
         dialog.title("New Form")
-        dialog.geometry("400x150")
+        dialog.geometry("500x150")
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
         
         ttk.Label(dialog, text="Enter form name:", font=("TkDefaultFont", 10)).pack(pady=10)
         
-        entry = ttk.Entry(dialog, width=40, font=("TkDefaultFont", 10))
+        # Auto-suggest next form name
+        suggested_name = self.suggest_next_form_name()
+        
+        entry = ttk.Entry(dialog, width=50, font=("TkDefaultFont", 10))
         entry.pack(pady=5, padx=20, fill="x")
+        entry.insert(0, suggested_name)
+        
+        # Select all text for easy editing
+        entry.select_range(0, tk.END)
+        
         entry.focus()
         
         result = {"name": ""}
@@ -649,17 +854,106 @@ class FormListFrame(ttk.Frame):
         name = result["name"]
         if name:
             self.add_form(name)
+            # Save database after adding form
+            if self.save_callback:
+                self.save_callback()
+    
+    def on_delete_form(self) -> None:
+        """Delete the selected form from the list."""
+        selection = self.listbox.curselection()
+        if not selection:
+            messagebox.showinfo("No Selection", "Please select a form to delete.")
+            return
+        
+        idx = selection[0]
+        if idx >= len(self.forms):
+            return
+        
+        form_name = self.forms[idx]
+        
+        # Confirmation dialog
+        result = messagebox.askyesno(
+            "Delete Form",
+            f"Are you sure you want to delete '{form_name}'?\n\nThis will remove the form and all its saved data.",
+            icon="warning"
+        )
+        
+        if result:
+            # Remove from list
+            self.forms.remove(form_name)
+            self.refresh_list()
+            
+            # Delete form state from database
+            if self.delete_callback:
+                self.delete_callback(form_name)
+            
+            # Save database
+            if self.save_callback:
+                self.save_callback()
+    
+    def get_form_status(self, form_name: str) -> str:
+        """Get status of a form: 'completed', 'in-progress', or 'not-started'."""
+        if self.get_form_state:
+            form_key = f"{self.section_name.lower()}:{form_name}"
+            state = self.get_form_state(form_key)
+            if state and state.get("score_text"):
+                return "completed"
+            elif state and (state.get("user_answers") or state.get("answer_keys")):
+                return "in-progress"
+        return "not-started"
+    
+    def format_listbox_item(self, form_name: str) -> str:
+        """Format form name for listbox (no status icons)."""
+        return form_name
+    
+    def on_form_double_click(self, event=None) -> None:
+        """Handle double click on listbox item - opens the form."""
+        # Prevent rapid successive clicks
+        if self._click_in_progress:
+            return
+        
+        try:
+            selection = self.listbox.curselection()
+            if not selection:
+                return
+            
+            idx = selection[0]
+            if idx >= len(self.forms):
+                return
+            
+            form_name = self.forms[idx]
+            
+            # Set flag to prevent rapid clicks
+            self._click_in_progress = True
+            
+            # Schedule the actual form opening to avoid blocking
+            def open_form():
+                try:
+                    self.on_form_clicked(form_name)
+                except Exception as e:
+                    print(f"Error opening form: {e}")
+                finally:
+                    # Reset flag after a delay
+                    self.winfo_toplevel().after(300, lambda: setattr(self, '_click_in_progress', False))
+            
+            # Use after_idle to ensure it runs after current event processing
+            self.winfo_toplevel().after_idle(open_form)
+            
+        except (tk.TclError, AttributeError, IndexError) as e:
+            # Reset flag on error
+            self._click_in_progress = False
+            print(f"Error in double-click handler: {e}")
     
     def add_form(self, form_name: str) -> None:
         if form_name not in self.forms:
             self.forms.append(form_name)
-            self.listbox.insert(tk.END, form_name)
+            self.refresh_list()
     
-    def on_form_double_click(self, event=None) -> None:
-        selection = self.listbox.curselection()
-        if selection:
-            form_name = self.listbox.get(selection[0])
-            self.on_form_clicked(form_name)
+    def refresh_list(self) -> None:
+        """Refresh the listbox with current forms."""
+        self.listbox.delete(0, tk.END)
+        for form_name in self.forms:
+            self.listbox.insert(tk.END, form_name)
 
 
 class IELTSApp:
@@ -748,8 +1042,14 @@ class IELTSApp:
         reading_button.pack(side="left", padx=15, pady=10)
 
         # Form list frames
-        self.listening_list = FormListFrame(self.stack_frame, "Listening", self.on_form_clicked)
-        self.reading_list = FormListFrame(self.stack_frame, "Reading", self.on_form_clicked)
+        self.listening_list = FormListFrame(self.stack_frame, "Listening", self.on_form_clicked,
+                                           get_form_state=lambda key: self.form_states.get(key),
+                                           save_callback=self.save_database,
+                                           delete_callback=lambda name: self.delete_form_state("listening", name))
+        self.reading_list = FormListFrame(self.stack_frame, "Reading", self.on_form_clicked,
+                                         get_form_state=lambda key: self.form_states.get(key),
+                                         save_callback=self.save_database,
+                                         delete_callback=lambda name: self.delete_form_state("reading", name))
 
         # Show landing page initially
         self.landing_frame.pack(fill="both", expand=True)
@@ -758,6 +1058,12 @@ class IELTSApp:
         self.open_windows: Dict[str, FormWindow] = {}
         # Store form states (persists across window open/close)
         self.form_states: Dict[str, Dict] = {}
+        
+        # Save database when app closes
+        self.root.protocol("WM_DELETE_WINDOW", self.on_app_close)
+        
+        # Load saved data from JSON database (after form lists are created)
+        self.load_database()
         
         # Auto-size window
         self.root.update_idletasks()
@@ -778,8 +1084,10 @@ class IELTSApp:
         # Show selected section list
         if target == "listening":
             self.listening_list.pack(fill="both", expand=True)
+            self.listening_list.refresh_list()  # Refresh to show updated status
         else:
             self.reading_list.pack(fill="both", expand=True)
+            self.reading_list.refresh_list()  # Refresh to show updated status
 
         self.root.title(f"IELTS Answer Form · {target.capitalize()}")
         self.back_button.state(["!disabled"])
@@ -804,6 +1112,80 @@ class IELTSApp:
         height = max(self.root.winfo_reqheight() + 20, 500)
         self.root.geometry(f"{width}x{height}")
 
+    def load_database(self) -> None:
+        """Load form states and form lists from JSON database."""
+        try:
+            if FORMS_DB_FILE.exists():
+                with open(FORMS_DB_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    
+                # Load form states
+                self.form_states = data.get("form_states", {})
+                
+                # Load form lists
+                listening_forms = data.get("listening_forms", [])
+                reading_forms = data.get("reading_forms", [])
+                
+                # Restore form lists
+                for form_name in listening_forms:
+                    if form_name not in self.listening_list.forms:
+                        self.listening_list.add_form(form_name)
+                
+                for form_name in reading_forms:
+                    if form_name not in self.reading_list.forms:
+                        self.reading_list.add_form(form_name)
+        except (json.JSONDecodeError, IOError, Exception) as e:
+            # If file is corrupted or doesn't exist, start fresh
+            print(f"Warning: Could not load database: {e}")
+            self.form_states = {}
+    
+    def save_database(self) -> None:
+        """Save form states and form lists to JSON database."""
+        try:
+            # Save all open windows' states before saving
+            for form_key, form_window in list(self.open_windows.items()):
+                try:
+                    self.form_states[form_key] = form_window.save_state()
+                except (tk.TclError, AttributeError):
+                    pass  # Window was destroyed
+            
+            data = {
+                "form_states": self.form_states,
+                "listening_forms": self.listening_list.forms,
+                "reading_forms": self.reading_list.forms
+            }
+            
+            # Write to temporary file first, then rename (atomic write)
+            temp_file = FORMS_DB_FILE.with_suffix(".json.tmp")
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            # Atomic replace (cross-platform, Python 3.3+)
+            os.replace(str(temp_file), str(FORMS_DB_FILE))
+        except (IOError, Exception) as e:
+            print(f"Warning: Could not save database: {e}")
+    
+    def delete_form_state(self, section: str, form_name: str) -> None:
+        """Delete form state from database."""
+        form_key = f"{section}:{form_name}"
+        
+        # Remove from form_states
+        if form_key in self.form_states:
+            del self.form_states[form_key]
+        
+        # Close window if it's open
+        if form_key in self.open_windows:
+            try:
+                self.open_windows[form_key].window.destroy()
+            except (tk.TclError, AttributeError):
+                pass
+            del self.open_windows[form_key]
+    
+    def on_app_close(self) -> None:
+        """Handle app close - save database before exiting."""
+        self.save_database()
+        self.root.destroy()
+
     def on_form_clicked(self, form_name: str) -> None:
         """Open or focus a form window."""
         if not self.current_section:
@@ -815,12 +1197,19 @@ class IELTSApp:
         # If window already exists, focus it
         if form_key in self.open_windows:
             try:
-                self.open_windows[form_key].window.lift()
-                self.open_windows[form_key].window.focus()
-                return
-            except tk.TclError:
+                window = self.open_windows[form_key].window
+                # Check if window still exists
+                if window.winfo_exists():
+                    window.lift()
+                    window.focus()
+                    return
+                else:
+                    # Window was destroyed, remove from dict
+                    del self.open_windows[form_key]
+            except (tk.TclError, AttributeError):
                 # Window was closed, remove from dict
-                del self.open_windows[form_key]
+                if form_key in self.open_windows:
+                    del self.open_windows[form_key]
         
         # Create groups based on section and set appropriate window sizes
         if self.current_section == "listening":
@@ -848,31 +1237,56 @@ class IELTSApp:
             min_height = 600
         
         # Create new form window with section-specific sizes
-        form_window = FormWindow(
-            self.root, 
-            form_name, 
-            section_name, 
-            groups,
-            default_width=default_width,
-            default_height=default_height,
-            min_width=min_width,
-            min_height=min_height
-        )
-        self.open_windows[form_key] = form_window
-        
-        # Load saved state if exists
-        if form_key in self.form_states:
-            form_window.load_state(self.form_states[form_key])
-        
-        # Clean up when window closes
-        def on_close():
-            # Save state before closing
-            if form_key in self.open_windows:
-                self.form_states[form_key] = form_window.save_state()
-                del self.open_windows[form_key]
-            form_window.window.destroy()
-        
-        form_window.window.protocol("WM_DELETE_WINDOW", on_close)
+        try:
+            form_window = FormWindow(
+                self.root, 
+                form_name, 
+                section_name, 
+                groups,
+                default_width=default_width,
+                default_height=default_height,
+                min_width=min_width,
+                min_height=min_height
+            )
+            self.open_windows[form_key] = form_window
+            
+            # Load saved state if exists
+            if form_key in self.form_states:
+                try:
+                    form_window.load_state(self.form_states[form_key])
+                except Exception as e:
+                    print(f"Warning: Could not load state for {form_name}: {e}")
+            
+            # Clean up when window closes
+            def on_close():
+                try:
+                    # Save state before closing
+                    if form_key in self.open_windows:
+                        try:
+                            self.form_states[form_key] = form_window.save_state()
+                        except Exception:
+                            pass  # Ignore save errors on close
+                        del self.open_windows[form_key]
+                        # Refresh the form list to update status
+                        if self.current_section == "listening":
+                            self.listening_list.refresh_list()
+                        elif self.current_section == "reading":
+                            self.reading_list.refresh_list()
+                        # Save to database
+                        self.save_database()
+                    try:
+                        form_window.window.destroy()
+                    except (tk.TclError, AttributeError):
+                        pass  # Window already destroyed
+                except Exception as e:
+                    print(f"Error in window close handler: {e}")
+            
+            form_window.window.protocol("WM_DELETE_WINDOW", on_close)
+        except Exception as e:
+            print(f"Error creating form window: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Error", f"Could not open form '{form_name}': {e}")
 
 
 def setup_modern_theme(root: tk.Tk) -> None:
