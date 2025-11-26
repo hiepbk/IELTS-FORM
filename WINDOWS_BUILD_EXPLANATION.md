@@ -45,7 +45,7 @@ pip install pyinstaller
 
 ### Step 2: Build the `.exe`
 ```powershell
-pwsh -File packaging/windows/build_exe.ps1 -Version 1.0.0
+powershell -ExecutionPolicy Bypass -File .\packaging\windows\build_exe.ps1 -Version 1.0.0
 ```
 
 The script now uses `ielts_form_tkinter.py` instead of `ielts_form_gtk.py`, so it will work without any GTK dependencies!
